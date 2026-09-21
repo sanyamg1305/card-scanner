@@ -829,6 +829,7 @@ export default function ScanPage() {
                 {[
                   'Inquiring for 600x1200 GVT Tiles',
                   'Looking for 800x1600 & Slab distributor',
+                  'Inquiring for Handmade & Subway tiles',
                   'Tile Exporter looking for OEM factory',
                   'Large project contractor requirement',
                   'Requested catalog & wholesale price list',
