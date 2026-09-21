@@ -23,6 +23,9 @@ import {
   AlertCircle,
   MessageSquare,
   Download,
+  Package,
+  Plus,
+  X,
 } from 'lucide-react';
 
 export default function ScanPage() {
@@ -31,6 +34,7 @@ export default function ScanPage() {
   // Images state
   const [frontImage, setFrontImage] = useState<string | null>(null);
   const [backImage, setBackImage] = useState<string | null>(null);
+  const [productImages, setProductImages] = useState<string[]>([]);
   const [savedFrontUrl, setSavedFrontUrl] = useState<string>('');
   const [savedBackUrl, setSavedBackUrl] = useState<string>('');
 
@@ -73,6 +77,7 @@ export default function ScanPage() {
 
   const frontInputRef = useRef<HTMLInputElement>(null);
   const backInputRef = useRef<HTMLInputElement>(null);
+  const productInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     // Load default exhibition name from settings
@@ -103,6 +108,24 @@ export default function ScanPage() {
     reader.readAsDataURL(file);
   };
 
+  const handleProductImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    Array.from(files).forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = reader.result as string;
+        setProductImages((prev) => [...prev, base64]);
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const removeProductImage = (indexToRemove: number) => {
+    setProductImages((prev) => prev.filter((_, i) => i !== indexToRemove));
+  };
+
   const runAiAnalysis = async () => {
     if (!frontImage) {
       setScanError('Please take or upload a photo of the card front.');
@@ -111,7 +134,7 @@ export default function ScanPage() {
 
     setIsScanning(true);
     setScanError(null);
-    setScanStepMessage('Sending card to Gemini Multimodal AI...');
+    setScanStepMessage('Sending card and product images to Gemini Multimodal AI...');
 
     try {
       const res = await fetch('/api/scan', {
@@ -120,6 +143,7 @@ export default function ScanPage() {
         body: JSON.stringify({
           frontImage,
           backImage,
+          productImages,
         }),
       });
 
@@ -207,6 +231,7 @@ export default function ScanPage() {
         tags,
         image_front: savedFrontUrl || frontImage || '',
         image_back: savedBackUrl || backImage || '',
+        product_images: productImages,
         raw_extracted_json: extracted ? JSON.stringify(extracted) : '',
       };
 
@@ -231,6 +256,7 @@ export default function ScanPage() {
   const resetFormForNextCard = () => {
     setFrontImage(null);
     setBackImage(null);
+    setProductImages([]);
     setSavedFrontUrl('');
     setSavedBackUrl('');
     setExtracted(null);
@@ -416,6 +442,83 @@ export default function ScanPage() {
               </div>
             )}
           </div>
+        </div>
+
+        {/* Product & Sample Photos (Optional) */}
+        <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <Package size={14} className="text-indigo-600" />
+                <span>Product & Sample Photos</span>
+                <span className="text-slate-400 font-normal">({productImages.length} attached)</span>
+              </label>
+              <p className="text-[11px] text-slate-400">
+                Snap photos of booth products, samples, or catalog pages
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => productInputRef.current?.click()}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold transition-colors shadow-sm"
+            >
+              <Plus size={13} />
+              <span>Add Product</span>
+            </button>
+          </div>
+
+          <input
+            type="file"
+            ref={productInputRef}
+            accept="image/*"
+            capture="environment"
+            multiple
+            onChange={handleProductImageUpload}
+            className="hidden"
+          />
+
+          {productImages.length > 0 ? (
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5 pt-1">
+              {productImages.map((img, idx) => (
+                <div
+                  key={idx}
+                  className="relative group rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 aspect-square bg-slate-950 flex items-center justify-center shadow-sm"
+                >
+                  <img
+                    src={img}
+                    alt={`Product ${idx + 1}`}
+                    className="w-full h-full object-cover"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeProductImage(idx)}
+                    className="absolute top-1.5 right-1.5 p-1 bg-red-600/90 hover:bg-red-600 text-white rounded-lg text-xs opacity-0 group-hover:opacity-100 transition-opacity shadow"
+                    title="Remove product photo"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => productInputRef.current?.click()}
+                className="rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-indigo-500 flex flex-col items-center justify-center text-slate-400 hover:text-indigo-600 aspect-square transition-colors p-2 text-center bg-slate-50/50 hover:bg-indigo-50/30"
+              >
+                <Plus size={20} />
+                <span className="text-[10px] font-semibold mt-1">Add More</span>
+              </button>
+            </div>
+          ) : (
+            <div
+              onClick={() => productInputRef.current?.click()}
+              className="border border-dashed border-slate-200 dark:border-slate-700 hover:border-indigo-400 rounded-xl p-3.5 flex items-center justify-center gap-2 cursor-pointer bg-slate-50/50 hover:bg-indigo-50/20 transition-colors"
+            >
+              <Package size={16} className="text-slate-400" />
+              <span className="text-xs font-medium text-slate-600 dark:text-slate-400">
+                Tap to snap or attach product/sample photos (optional)
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Meeting Notes (Right as you meet them!) */}

@@ -2,6 +2,14 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { CardScanResult, VisitingCard } from './types';
 import { getSetting } from './db';
 
+const PREFERRED_MODELS = [
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
+  'gemini-2.0-flash-001',
+  'gemini-2.5-pro',
+  'gemini-1.5-pro',
+];
+
 export async function getGeminiApiKey(explicitKey?: string): Promise<string> {
   if (explicitKey && explicitKey.trim().length > 0) {
     return explicitKey.trim();
@@ -16,8 +24,44 @@ export async function getGeminiApiKey(explicitKey?: string): Promise<string> {
   return '';
 }
 
+/**
+ * Dynamically queries the Google Gemini API to find the active model supported by this key
+ */
+async function discoverAvailableModel(apiKey: string): Promise<string[]> {
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.models && Array.isArray(data.models)) {
+        const supported = data.models
+          .filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
+          .map((m: any) => m.name.replace(/^models\//, ''));
+
+        // Prioritize preferred models that exist in the account's supported list
+        const matched = PREFERRED_MODELS.filter((m) => supported.includes(m));
+        // Add any other active flash models
+        const otherFlash = supported.filter((m: string) => m.includes('flash') && !matched.includes(m));
+        // Combine
+        const candidates = [...matched, ...otherFlash, ...supported];
+        if (candidates.length > 0) {
+          return candidates;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Could not query available Gemini models, defaulting to standard candidates', err);
+  }
+  return PREFERRED_MODELS;
+}
+
 export async function parseCardWithGemini(
-  images: { frontBase64: string; frontMime: string; backBase64?: string; backMime?: string },
+  images: {
+    frontBase64: string;
+    frontMime: string;
+    backBase64?: string;
+    backMime?: string;
+    productImagesBase64?: string[];
+  },
   apiKeyOverride?: string
 ): Promise<CardScanResult> {
   const apiKey = await getGeminiApiKey(apiKeyOverride);
@@ -29,19 +73,11 @@ export async function parseCardWithGemini(
   }
 
   const genAI = new GoogleGenerativeAI(apiKey);
-  
-  // Use gemini-2.0-flash with native JSON mode
-  const model = genAI.getGenerativeModel({
-    model: 'gemini-2.0-flash',
-    generationConfig: {
-      responseMimeType: 'application/json',
-      temperature: 0.1,
-    },
-  });
+  const modelsToTry = await discoverAvailableModel(apiKey);
 
   const prompt = `
 You are an expert AI business card analyzer specialized for trade shows and exhibitions.
-Analyze the provided business card image(s) (Front and optional Back).
+Analyze the provided business card image(s) (Front and optional Back) and any attached product/sample photos.
 Extract all contact and business information with high precision and classify the business.
 
 Return ONLY a JSON object matching this exact schema:
@@ -63,7 +99,7 @@ Return ONLY a JSON object matching this exact schema:
   "other_social": "Other social handles (Twitter/X, Instagram, WeChat, etc.)",
   "industry": "Industry or business domain (e.g. Manufacturing, Software & IT, Packaging, Logistics, Healthcare, Chemicals, Construction, Retail, Finance, Textile, etc.)",
   "role_type": "One of: 'Decision Maker', 'Buyer', 'Supplier', 'Partner', 'Distributor', 'Consultant', 'Other'",
-  "company_summary": "A concise 1-sentence summary of what this company does or makes, based on their products/services/tagline",
+  "company_summary": "A concise 1-sentence summary of what this company does or makes, based on their products/services/tagline and sample photos",
   "suggested_tags": ["array", "of", "3-5", "relevant", "keywords", "or", "products"],
   "suggested_priority": "HOT" if high-level decision maker / director / CXO, else "WARM"
 }
@@ -91,27 +127,52 @@ If any field is not visible on the card, leave it as an empty string "". Ensure 
     });
   }
 
-  try {
-    const result = await model.generateContent(contents);
-    const text = result.response.text();
-    const parsed = JSON.parse(text) as CardScanResult;
-    return parsed;
-  } catch (err: any) {
-    // If gemini-2.0-flash is unavailable or throttled, try gemini-1.5-flash
-    if (err.message && (err.message.includes('404') || err.message.includes('not found') || err.message.includes('model'))) {
-      const fallbackModel = genAI.getGenerativeModel({
-        model: 'gemini-1.5-flash',
+  // Optional product photos
+  if (images.productImagesBase64 && images.productImagesBase64.length > 0) {
+    for (const pImg of images.productImagesBase64.slice(0, 3)) {
+      const match = pImg.match(/^data:([A-Za-z-+/]+);base64,(.+)$/);
+      const mime = match ? match[1] : 'image/jpeg';
+      const b64 = match ? match[2] : pImg;
+      contents.push({
+        inlineData: {
+          data: b64,
+          mimeType: mime,
+        },
+      });
+    }
+  }
+
+  let lastError: any = null;
+
+  for (const modelName of modelsToTry) {
+    try {
+      const model = genAI.getGenerativeModel({
+        model: modelName,
         generationConfig: {
           responseMimeType: 'application/json',
           temperature: 0.1,
         },
       });
-      const fallbackResult = await fallbackModel.generateContent(contents);
-      const fallbackText = fallbackResult.response.text();
-      return JSON.parse(fallbackText) as CardScanResult;
+
+      const result = await model.generateContent(contents);
+      const text = result.response.text();
+      return JSON.parse(text) as CardScanResult;
+    } catch (err: any) {
+      lastError = err;
+      const msg = err.message || '';
+      // If 404 or unsupported model, continue to next candidate
+      if (msg.includes('404') || msg.includes('not found') || msg.includes('supported') || msg.includes('deprecated')) {
+        console.warn(`Model ${modelName} not available, attempting next candidate...`);
+        continue;
+      }
+      // If it's an authentication error or invalid key, throw immediately
+      if (msg.includes('API_KEY_INVALID') || msg.includes('quota') || msg.includes('unauthorized')) {
+        throw err;
+      }
     }
-    throw err;
   }
+
+  throw lastError || new Error('Failed to analyze business card with available Gemini models.');
 }
 
 export async function generateFollowupEmailDraft(
@@ -125,13 +186,7 @@ export async function generateFollowupEmailDraft(
   }
 
   const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({
-    model: 'gemini-2.0-flash',
-    generationConfig: {
-      responseMimeType: 'application/json',
-      temperature: 0.7,
-    },
-  });
+  const modelsToTry = await discoverAvailableModel(apiKey);
 
   const prompt = `
 You are an executive assistant drafting a personalized, highly professional follow-up email after meeting a contact at a trade exhibition.
@@ -154,7 +209,30 @@ Return ONLY a JSON object:
 }
 `;
 
-  const result = await model.generateContent(prompt);
-  const text = result.response.text();
-  return JSON.parse(text);
+  let lastError: any = null;
+
+  for (const modelName of modelsToTry) {
+    try {
+      const model = genAI.getGenerativeModel({
+        model: modelName,
+        generationConfig: {
+          responseMimeType: 'application/json',
+          temperature: 0.7,
+        },
+      });
+
+      const result = await model.generateContent(prompt);
+      const text = result.response.text();
+      return JSON.parse(text);
+    } catch (err: any) {
+      lastError = err;
+      const msg = err.message || '';
+      if (msg.includes('404') || msg.includes('not found') || msg.includes('supported') || msg.includes('deprecated')) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw lastError || new Error('Failed to generate follow-up email with available Gemini models.');
 }

@@ -21,6 +21,7 @@ import {
   ExternalLink,
   ChevronRight,
   Tag,
+  Package,
 } from 'lucide-react';
 
 function CardsDirectoryContent() {
@@ -326,6 +327,12 @@ function CardsDirectoryContent() {
                       {card.exhibition_name && (
                         <span className="text-[11px] px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 font-medium">
                           {card.exhibition_name}
+                        </span>
+                      )}
+                      {card.product_images && card.product_images.length > 0 && (
+                        <span className="text-[11px] px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 font-medium flex items-center gap-1">
+                          <Package size={11} />
+                          {card.product_images.length} {card.product_images.length === 1 ? 'product' : 'products'}
                         </span>
                       )}
                     </div>

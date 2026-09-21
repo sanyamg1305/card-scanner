@@ -23,7 +23,11 @@ import {
   Clock,
   Layers,
   Check,
+  Package,
+  Plus,
+  X,
 } from 'lucide-react';
+import { useRef } from 'react';
 
 export default function CardDetailPage({ params }: { params: { id: string } }) {
   const router = useRouter();
@@ -32,6 +36,7 @@ export default function CardDetailPage({ params }: { params: { id: string } }) {
   const [saving, setSaving] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const productInputRef = useRef<HTMLInputElement>(null);
 
   // Editable form fields
   const [name, setName] = useState('');
@@ -52,6 +57,7 @@ export default function CardDetailPage({ params }: { params: { id: string } }) {
   const [companySummary, setCompanySummary] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [newTagInput, setNewTagInput] = useState('');
+  const [productImages, setProductImages] = useState<string[]>([]);
 
   const [exhibitionName, setExhibitionName] = useState('');
   const [boothNumber, setBoothNumber] = useState('');
@@ -85,6 +91,7 @@ export default function CardDetailPage({ params }: { params: { id: string } }) {
           setRoleType(c.role_type || '');
           setCompanySummary(c.company_summary || '');
           setTags(c.tags || []);
+          setProductImages(c.product_images || []);
           setExhibitionName(c.exhibition_name || '');
           setBoothNumber(c.booth_number || '');
           setMeetingNotes(c.meeting_notes || '');
@@ -102,6 +109,23 @@ export default function CardDetailPage({ params }: { params: { id: string } }) {
     }
     loadCard();
   }, [params.id]);
+
+  const handleProductImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    Array.from(files).forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = reader.result as string;
+        setProductImages((prev) => [...prev, base64]);
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const removeProductImage = (idxToRemove: number) => {
+    setProductImages((prev) => prev.filter((_, i) => i !== idxToRemove));
+  };
 
   const handleSaveChanges = async () => {
     setSaving(true);
@@ -125,6 +149,7 @@ export default function CardDetailPage({ params }: { params: { id: string } }) {
         role_type: roleType,
         company_summary: companySummary,
         tags,
+        product_images: productImages,
         exhibition_name: exhibitionName,
         booth_number: boothNumber,
         meeting_notes: meetingNotes,
@@ -290,6 +315,86 @@ export default function CardDetailPage({ params }: { params: { id: string } }) {
           </div>
         </div>
       )}
+
+      {/* Product & Sample Photos Section */}
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 p-5 shadow-sm space-y-3">
+        <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+          <div>
+            <h2 className="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
+              <Package size={14} />
+              Product & Sample Photos
+            </h2>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              Photos of products or samples taken at the booth ({productImages.length} photos)
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => productInputRef.current?.click()}
+            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold transition-colors"
+          >
+            <Plus size={13} />
+            <span>Add Photo</span>
+          </button>
+        </div>
+
+        <input
+          type="file"
+          ref={productInputRef}
+          accept="image/*"
+          capture="environment"
+          multiple
+          onChange={handleProductImageUpload}
+          className="hidden"
+        />
+
+        {productImages.length > 0 ? (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+            {productImages.map((img, idx) => (
+              <div
+                key={idx}
+                className="relative group rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 aspect-square bg-slate-950 flex items-center justify-center shadow-sm"
+              >
+                <img
+                  src={img}
+                  alt={`Product ${idx + 1}`}
+                  className="w-full h-full object-cover cursor-pointer hover:scale-105 transition-transform"
+                  onClick={() => window.open(img, '_blank')}
+                />
+                <button
+                  type="button"
+                  onClick={() => removeProductImage(idx)}
+                  className="absolute top-1.5 right-1.5 p-1 bg-red-600/90 hover:bg-red-600 text-white rounded-lg text-xs opacity-0 group-hover:opacity-100 transition-opacity shadow"
+                  title="Remove photo"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() => productInputRef.current?.click()}
+              className="rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-indigo-500 flex flex-col items-center justify-center text-slate-400 hover:text-indigo-600 aspect-square transition-colors p-3 text-center bg-slate-50/50 hover:bg-indigo-50/30"
+            >
+              <Plus size={22} />
+              <span className="text-xs font-semibold mt-1">Add Photo</span>
+            </button>
+          </div>
+        ) : (
+          <div
+            onClick={() => productInputRef.current?.click()}
+            className="border border-dashed border-slate-200 dark:border-slate-700 hover:border-indigo-400 rounded-xl p-5 flex flex-col items-center justify-center gap-1.5 cursor-pointer bg-slate-50/50 hover:bg-indigo-50/20 transition-colors text-center"
+          >
+            <Package size={20} className="text-slate-400" />
+            <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+              No product photos attached yet
+            </span>
+            <span className="text-[11px] text-slate-400">
+              Tap to take or upload photos of products or samples from this contact
+            </span>
+          </div>
+        )}
+      </div>
 
       {/* Meeting Notes & Action Items (Exhibition CRM) */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 p-5 sm:p-6 shadow-sm space-y-4">

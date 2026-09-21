@@ -65,6 +65,7 @@ function getSqliteDb() {
           tags TEXT DEFAULT '[]',
           image_front TEXT,
           image_back TEXT,
+          product_images TEXT DEFAULT '[]',
           raw_extracted_json TEXT
         );
 
@@ -73,6 +74,11 @@ function getSqliteDb() {
           value TEXT NOT NULL
         );
       `);
+
+      // Safe migration for existing SQLite DBs
+      try {
+        sqliteDb.exec("ALTER TABLE cards ADD COLUMN product_images TEXT DEFAULT '[]'");
+      } catch (e) {}
     } catch (err) {
       console.warn('SQLite fallback unavailable:', err);
     }
@@ -116,6 +122,11 @@ function parseCardRow(row: any): VisitingCard {
       : [],
     image_front: row.image_front || '',
     image_back: row.image_back || '',
+    product_images: Array.isArray(row.product_images)
+      ? row.product_images
+      : typeof row.product_images === 'string'
+      ? JSON.parse(row.product_images || '[]')
+      : [],
     raw_extracted_json: row.raw_extracted_json || '',
   };
 }
@@ -182,7 +193,7 @@ export async function getAllCards(filters?: {
       LOWER(meeting_notes) LIKE ? OR 
       LOWER(phone) LIKE ? OR 
       LOWER(email) LIKE ? OR 
-      LOWER(industry) LIKE ? OR
+      LOWER(industry) LIKE ? OR 
       LOWER(tags) LIKE ?
     )`;
     params.push(s, s, s, s, s, s, s, s);
@@ -247,6 +258,7 @@ export async function createCard(data: Partial<VisitingCard>): Promise<VisitingC
     tags: data.tags || [],
     image_front: data.image_front || '',
     image_back: data.image_back || '',
+    product_images: data.product_images || [],
     raw_extracted_json: data.raw_extracted_json || '',
   };
 
@@ -273,14 +285,14 @@ export async function createCard(data: Partial<VisitingCard>): Promise<VisitingC
         phone, phone_secondary, email, email_secondary, website,
         address, city, country, linkedin, other_social,
         exhibition_name, booth_number, meeting_notes, action_items,
-        follow_up_date, lead_priority, tags, image_front, image_back, raw_extracted_json
+        follow_up_date, lead_priority, tags, image_front, image_back, product_images, raw_extracted_json
       ) VALUES (
         ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?,
         ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?
       )
     `);
 
@@ -315,6 +327,7 @@ export async function createCard(data: Partial<VisitingCard>): Promise<VisitingC
       JSON.stringify(record.tags),
       record.image_front,
       record.image_back,
+      JSON.stringify(record.product_images || []),
       record.raw_extracted_json
     );
   }
@@ -383,6 +396,7 @@ export async function updateCard(
         tags = ?,
         image_front = ?,
         image_back = ?,
+        product_images = ?,
         raw_extracted_json = ?
       WHERE id = ?
     `);
@@ -416,6 +430,7 @@ export async function updateCard(
       JSON.stringify(merged.tags || []),
       merged.image_front,
       merged.image_back,
+      JSON.stringify(merged.product_images || []),
       merged.raw_extracted_json,
       id
     );

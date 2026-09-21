@@ -43,6 +43,7 @@ export interface VisitingCard {
   // Images & Raw Data
   image_front?: string;
   image_back?: string;
+  product_images?: string[]; // Array of product/sample photo data URLs
   raw_extracted_json?: string;
 }
 

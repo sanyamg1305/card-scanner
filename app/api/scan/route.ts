@@ -4,7 +4,7 @@ import { parseCardWithGemini } from '@/lib/gemini';
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { frontImage, backImage, apiKey } = body;
+    const { frontImage, backImage, productImages, apiKey } = body;
 
     if (!frontImage) {
       return NextResponse.json({ error: 'Front image is required' }, { status: 400 });
@@ -41,6 +41,7 @@ export async function POST(req: NextRequest) {
         frontMime,
         backBase64,
         backMime,
+        productImagesBase64: Array.isArray(productImages) ? productImages : undefined,
       },
       apiKey
     );
@@ -52,6 +53,7 @@ export async function POST(req: NextRequest) {
       images: {
         front: frontImage,
         back: backImage || null,
+        products: Array.isArray(productImages) ? productImages : [],
       },
     });
   } catch (error: any) {
