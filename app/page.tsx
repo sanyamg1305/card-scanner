@@ -43,10 +43,11 @@ export default function DashboardPage() {
   useEffect(() => {
     async function loadData() {
       try {
+        const t = Date.now();
         const [cardsRes, statsRes, settingsRes] = await Promise.all([
-          fetch('/api/cards'),
-          fetch('/api/cards?stats=true'),
-          fetch('/api/settings'),
+          fetch(`/api/cards?_t=${t}`, { cache: 'no-store' }),
+          fetch(`/api/cards?stats=true&_t=${t}`, { cache: 'no-store' }),
+          fetch(`/api/settings?_t=${t}`, { cache: 'no-store' }),
         ]);
 
         const cardsData = await cardsRes.json();

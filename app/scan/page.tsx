@@ -977,25 +977,36 @@ export default function ScanPage() {
           </div>
 
           {/* Save Action */}
-          <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-end">
-            <button
-              type="button"
-              onClick={handleSaveLead}
-              disabled={isSaving}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-md transition-all active:scale-[0.99]"
-            >
-              {isSaving ? (
-                <>
-                  <RefreshCw size={17} className="animate-spin" />
-                  <span>Saving Lead...</span>
-                </>
-              ) : (
-                <>
-                  <Check size={18} />
-                  <span>Save Lead to Database</span>
-                </>
-              )}
-            </button>
+          <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
+            {scanError && (
+              <div className="p-3.5 rounded-xl bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900/60 text-red-700 dark:text-red-300 flex items-start gap-2.5 text-xs animate-in fade-in">
+                <AlertCircle size={17} className="shrink-0 mt-0.5 text-red-600" />
+                <div className="space-y-1">
+                  <p className="font-bold text-red-800 dark:text-red-200">Unable to Save Lead</p>
+                  <p>{scanError}</p>
+                </div>
+              </div>
+            )}
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={handleSaveLead}
+                disabled={isSaving}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-md transition-all active:scale-[0.99]"
+              >
+                {isSaving ? (
+                  <>
+                    <RefreshCw size={17} className="animate-spin" />
+                    <span>Saving Lead...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check size={18} />
+                    <span>Save Lead to Database</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
