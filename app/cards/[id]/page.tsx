@@ -28,6 +28,7 @@ import {
   X,
 } from 'lucide-react';
 import { useRef } from 'react';
+import { compressImageFile } from '@/lib/imageUtils';
 
 export default function CardDetailPage({ params }: { params: { id: string } }) {
   const router = useRouter();
@@ -110,17 +111,17 @@ export default function CardDetailPage({ params }: { params: { id: string } }) {
     loadCard();
   }, [params.id]);
 
-  const handleProductImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleProductImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-    Array.from(files).forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const base64 = reader.result as string;
-        setProductImages((prev) => [...prev, base64]);
-      };
-      reader.readAsDataURL(file);
-    });
+    for (const file of Array.from(files)) {
+      try {
+        const compressed = await compressImageFile(file, 1200, 0.80);
+        setProductImages((prev) => [...prev, compressed]);
+      } catch (err) {
+        console.error('Compression error:', err);
+      }
+    }
   };
 
   const removeProductImage = (idxToRemove: number) => {

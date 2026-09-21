@@ -27,6 +27,7 @@ import {
   Plus,
   X,
 } from 'lucide-react';
+import { compressImageFile } from '@/lib/imageUtils';
 
 export default function ScanPage() {
   const router = useRouter();
@@ -89,37 +90,37 @@ export default function ScanPage() {
       .catch(() => {});
   }, []);
 
-  const handleImageUpload = (
+  const handleImageUpload = async (
     e: React.ChangeEvent<HTMLInputElement>,
     side: 'front' | 'back'
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64 = reader.result as string;
+    try {
+      const compressed = await compressImageFile(file, 1600, 0.85);
       if (side === 'front') {
-        setFrontImage(base64);
+        setFrontImage(compressed);
       } else {
-        setBackImage(base64);
+        setBackImage(compressed);
       }
-    };
-    reader.readAsDataURL(file);
+    } catch (err) {
+      console.error('Image compression error:', err);
+    }
   };
 
-  const handleProductImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleProductImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    Array.from(files).forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const base64 = reader.result as string;
-        setProductImages((prev) => [...prev, base64]);
-      };
-      reader.readAsDataURL(file);
-    });
+    for (const file of Array.from(files)) {
+      try {
+        const compressed = await compressImageFile(file, 1200, 0.80);
+        setProductImages((prev) => [...prev, compressed]);
+      } catch (err) {
+        console.error('Product image compression error:', err);
+      }
+    }
   };
 
   const removeProductImage = (indexToRemove: number) => {
@@ -147,10 +148,20 @@ export default function ScanPage() {
         }),
       });
 
-      const data = await res.json();
+      const responseText = await res.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(responseText);
+      } catch (parseErr) {
+        throw new Error(
+          res.status === 413
+            ? 'Images too large for serverless limit (4.5MB). Please retake with a smaller photo.'
+            : `Server returned an error (${res.status}): ${responseText.slice(0, 150)}`
+        );
+      }
 
       if (!res.ok || data.error) {
-        throw new Error(data.error || 'Failed to scan card');
+        throw new Error(data.error || `Server error (${res.status})`);
       }
 
       const parsed: CardScanResult = data.data;

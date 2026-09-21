@@ -109,20 +109,37 @@ If any field is not visible on the card, leave it as an empty string "". Ensure 
 
   const contents: any[] = [prompt];
 
+  function cleanBase64Data(raw: string, defaultMime = 'image/jpeg'): { data: string; mimeType: string } {
+    let mimeType = defaultMime;
+    let data = raw.trim();
+    const match = data.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,([\s\S]+)$/);
+    if (match) {
+      mimeType = match[1];
+      data = match[2];
+    } else {
+      data = data.replace(/^data:[^;]+;base64,/, '');
+    }
+    // Remove all whitespace/linebreaks
+    data = data.replace(/\s+/g, '');
+    return { data, mimeType };
+  }
+
   // Front image
+  const front = cleanBase64Data(images.frontBase64, images.frontMime);
   contents.push({
     inlineData: {
-      data: images.frontBase64.replace(/^data:image\/[a-z]+;base64,/, ''),
-      mimeType: images.frontMime || 'image/jpeg',
+      data: front.data,
+      mimeType: front.mimeType,
     },
   });
 
   // Optional back image
   if (images.backBase64) {
+    const back = cleanBase64Data(images.backBase64, images.backMime);
     contents.push({
       inlineData: {
-        data: images.backBase64.replace(/^data:image\/[a-z]+;base64,/, ''),
-        mimeType: images.backMime || 'image/jpeg',
+        data: back.data,
+        mimeType: back.mimeType,
       },
     });
   }
@@ -130,13 +147,11 @@ If any field is not visible on the card, leave it as an empty string "". Ensure 
   // Optional product photos
   if (images.productImagesBase64 && images.productImagesBase64.length > 0) {
     for (const pImg of images.productImagesBase64.slice(0, 3)) {
-      const match = pImg.match(/^data:([A-Za-z-+/]+);base64,(.+)$/);
-      const mime = match ? match[1] : 'image/jpeg';
-      const b64 = match ? match[2] : pImg;
+      const p = cleanBase64Data(pImg);
       contents.push({
         inlineData: {
-          data: b64,
-          mimeType: mime,
+          data: p.data,
+          mimeType: p.mimeType,
         },
       });
     }
