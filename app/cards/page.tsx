@@ -22,7 +22,11 @@ import {
   ChevronRight,
   Tag,
   Package,
+  FileText,
+  AlertCircle,
+  RefreshCw,
 } from 'lucide-react';
+import { ALL_CERAMIC_CATEGORIES } from '@/lib/categories';
 
 function CardsDirectoryContent() {
   const searchParams = useSearchParams();
@@ -31,8 +35,10 @@ function CardsDirectoryContent() {
 
   const [cards, setCards] = useState<VisitingCard[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [selectedPriority, setSelectedPriority] = useState<string>(initialPriority);
+  const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [selectedIndustry, setSelectedIndustry] = useState<string>(initialIndustry);
   const [selectedExhibition, setSelectedExhibition] = useState<string>('ALL');
 
@@ -42,18 +48,41 @@ function CardsDirectoryContent() {
 
   const fetchCards = async () => {
     setLoading(true);
+    setError(null);
     try {
-      const res = await fetch('/api/cards');
+      const res = await fetch(`/api/cards?_t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache' },
+      });
       const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || `Server responded with status ${res.status}`);
+      }
       if (data.cards) {
         setCards(data.cards);
       }
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      console.error('fetchCards error:', err);
+      setError(err.message || 'Failed to load visiting cards');
     } finally {
       setLoading(false);
     }
   };
+
+  // Unique list of categories present across cards + popular presets
+  const categoriesList = useMemo(() => {
+    const set = new Set<string>();
+    cards.forEach((c) => {
+      if (c.categories && Array.isArray(c.categories)) {
+        c.categories.forEach((cat) => set.add(cat));
+      }
+      if (c.category) set.add(c.category);
+    });
+    if (set.size === 0) {
+      ALL_CERAMIC_CATEGORIES.slice(0, 8).forEach((cat) => set.add(cat));
+    }
+    return Array.from(set).sort();
+  }, [cards]);
 
   // Derive unique lists of industries and exhibitions
   const industries = useMemo(() => {
@@ -78,6 +107,13 @@ function CardsDirectoryContent() {
       if (selectedPriority !== 'ALL' && c.lead_priority !== selectedPriority) {
         return false;
       }
+      if (selectedCategory !== 'ALL') {
+        const hasCategory =
+          (c.categories && c.categories.includes(selectedCategory)) ||
+          c.category === selectedCategory ||
+          c.industry === selectedCategory;
+        if (!hasCategory) return false;
+      }
       if (selectedIndustry !== 'ALL' && c.industry !== selectedIndustry) {
         return false;
       }
@@ -89,6 +125,10 @@ function CardsDirectoryContent() {
         const matches =
           c.name.toLowerCase().includes(query) ||
           c.company.toLowerCase().includes(query) ||
+          (c.description && c.description.toLowerCase().includes(query)) ||
+          (c.company_summary && c.company_summary.toLowerCase().includes(query)) ||
+          (c.category && c.category.toLowerCase().includes(query)) ||
+          (c.categories && c.categories.some((cat) => cat.toLowerCase().includes(query))) ||
           (c.designation && c.designation.toLowerCase().includes(query)) ||
           (c.phone && c.phone.toLowerCase().includes(query)) ||
           (c.email && c.email.toLowerCase().includes(query)) ||
@@ -99,7 +139,7 @@ function CardsDirectoryContent() {
       }
       return true;
     });
-  }, [cards, selectedPriority, selectedIndustry, selectedExhibition, search]);
+  }, [cards, selectedPriority, selectedCategory, selectedIndustry, selectedExhibition, search]);
 
   const priorityCounts = useMemo(() => {
     return {

@@ -26,9 +26,11 @@ import {
   Package,
   Plus,
   X,
+  FileText,
 } from 'lucide-react';
 import { useRef } from 'react';
 import { compressImageFile } from '@/lib/imageUtils';
+import { CERAMIC_TILE_CATEGORIES } from '@/lib/categories';
 
 export default function CardDetailPage({ params }: { params: { id: string } }) {
   const router = useRouter();
@@ -56,9 +58,29 @@ export default function CardDetailPage({ params }: { params: { id: string } }) {
   const [industry, setIndustry] = useState('');
   const [roleType, setRoleType] = useState('');
   const [companySummary, setCompanySummary] = useState('');
+  const [description, setDescription] = useState('');
+  const [categories, setCategories] = useState<string[]>([]);
+  const [customCategoryInput, setCustomCategoryInput] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [newTagInput, setNewTagInput] = useState('');
   const [productImages, setProductImages] = useState<string[]>([]);
+
+  const toggleCategory = (cat: string) => {
+    setCategories((prev) =>
+      prev.includes(cat) ? prev.filter((c) => c !== cat) : [...prev, cat]
+    );
+  };
+
+  const addCustomCategory = () => {
+    if (customCategoryInput.trim() && !categories.includes(customCategoryInput.trim())) {
+      setCategories([...categories, customCategoryInput.trim()]);
+      setCustomCategoryInput('');
+    }
+  };
+
+  const appendToDescription = (text: string) => {
+    setDescription((prev) => (prev ? `${prev}\n• ${text}` : `• ${text}`));
+  };
 
   const [exhibitionName, setExhibitionName] = useState('');
   const [boothNumber, setBoothNumber] = useState('');
@@ -70,7 +92,7 @@ export default function CardDetailPage({ params }: { params: { id: string } }) {
   useEffect(() => {
     async function loadCard() {
       try {
-        const res = await fetch(`/api/cards/${params.id}`);
+        const res = await fetch(`/api/cards/${params.id}?_t=${Date.now()}`, { cache: 'no-store' });
         const data = await res.json();
         if (data.card) {
           const c: VisitingCard = data.card;
@@ -91,6 +113,16 @@ export default function CardDetailPage({ params }: { params: { id: string } }) {
           setIndustry(c.industry || '');
           setRoleType(c.role_type || '');
           setCompanySummary(c.company_summary || '');
+          setDescription(c.description || c.company_summary || '');
+          const initialCats =
+            c.categories && c.categories.length > 0
+              ? c.categories
+              : c.category
+              ? [c.category]
+              : c.industry
+              ? [c.industry]
+              : [];
+          setCategories(initialCats);
           setTags(c.tags || []);
           setProductImages(c.product_images || []);
           setExhibitionName(c.exhibition_name || '');
@@ -146,9 +178,12 @@ export default function CardDetailPage({ params }: { params: { id: string } }) {
         address,
         city,
         country,
-        industry,
+        industry: categories[0] || industry,
+        category: categories[0] || industry || '',
+        categories,
+        description,
         role_type: roleType,
-        company_summary: companySummary,
+        company_summary: description || companySummary,
         tags,
         product_images: productImages,
         exhibition_name: exhibitionName,
@@ -272,6 +307,20 @@ export default function CardDetailPage({ params }: { params: { id: string } }) {
             )}
           </div>
         </div>
+
+        {/* Active Ceramic Categories Badges */}
+        {categories.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 pt-1">
+            {categories.map((cat) => (
+              <span
+                key={cat}
+                className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm"
+              >
+                {cat}
+              </span>
+            ))}
+          </div>
+        )}
 
         {/* 1-Click Action Bar */}
         <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
@@ -508,14 +557,119 @@ export default function CardDetailPage({ params }: { params: { id: string } }) {
           </div>
         </div>
 
-        <div>
-          <label className="text-xs text-slate-500 block mb-1">Company Summary (AI)</label>
+        {/* Ceramic Tile Categories */}
+        <div className="space-y-3 p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Layers className="text-indigo-600 dark:text-indigo-400" size={15} />
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                Ceramic Tile Categories
+              </label>
+            </div>
+            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+              {categories.length} Selected
+            </span>
+          </div>
+
+          <div className="space-y-3 pt-1">
+            {CERAMIC_TILE_CATEGORIES.map((group) => (
+              <div key={group.groupName} className="space-y-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                  {group.groupName}
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {group.categories.map((cat) => {
+                    const isSelected = categories.includes(cat);
+                    return (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() => toggleCategory(cat)}
+                        className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all ${
+                          isSelected
+                            ? 'bg-slate-900 text-white shadow-sm dark:bg-white dark:text-slate-900 font-semibold'
+                            : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
+                        }`}
+                      >
+                        {isSelected && '✓ '}
+                        {cat}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Custom Category Input */}
+          <div className="flex gap-2 pt-2 border-t border-slate-200/60 dark:border-slate-800">
+            <input
+              type="text"
+              placeholder="Add other category (e.g. 1200x2400 Slabs, Step Riser)..."
+              value={customCategoryInput}
+              onChange={(e) => setCustomCategoryInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  addCustomCategory();
+                }
+              }}
+              className="flex-1 text-xs px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
+            />
+            <button
+              type="button"
+              onClick={addCustomCategory}
+              className="px-3 py-1.5 bg-slate-900 dark:bg-slate-700 text-white text-xs font-semibold rounded-lg hover:bg-slate-800 transition-colors flex items-center gap-1"
+            >
+              <Plus size={13} /> Add
+            </button>
+          </div>
+        </div>
+
+        {/* Lead & Product Description Section */}
+        <div className="space-y-3 p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <FileText className="text-indigo-600 dark:text-indigo-400" size={15} />
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                Lead & Product Description
+              </label>
+            </div>
+            <span className="text-[11px] text-slate-400 font-medium">Exhibition Specs</span>
+          </div>
+
           <textarea
-            rows={2}
-            value={companySummary}
-            onChange={(e) => setCompanySummary(e.target.value)}
-            className="w-full text-sm px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+            rows={3}
+            placeholder="Product specifications, tile sizes, inquiry details, or booth conversation notes..."
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            className="w-full text-sm p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500/20 leading-relaxed"
           />
+
+          <div className="space-y-1.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+              Quick Exhibition Snippets (Tap to add):
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                'Inquiring for 600x1200 GVT Tiles',
+                'Looking for 800x1600 & Slab distributor',
+                'Tile Exporter looking for OEM factory',
+                'Large project contractor requirement',
+                'Requested catalog & wholesale price list',
+                'Samples provided at booth',
+              ].map((snippet) => (
+                <button
+                  key={snippet}
+                  type="button"
+                  onClick={() => appendToDescription(snippet)}
+                  className="text-[11px] px-2 py-1 rounded-md bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:border-indigo-300 hover:text-indigo-600 transition-colors"
+                >
+                  + {snippet}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         {/* Tags */}

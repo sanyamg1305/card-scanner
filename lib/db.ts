@@ -22,77 +22,45 @@ export function getSupabase(): SupabaseClient | null {
   return cachedSupabase;
 }
 
-// Fallback SQLite instance for offline / local development
-let sqliteDb: any = null;
-function getSqliteDb() {
-  if (!sqliteDb) {
-    try {
-      const { DatabaseSync } = require('node:sqlite');
-      const path = require('node:path');
-      const fs = require('node:fs');
+import fs from 'node:fs';
+import path from 'node:path';
 
-      // Use /tmp if on Vercel/serverless or ./data locally
-      const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
-      const dataDir = isServerless ? '/tmp' : path.join(process.cwd(), 'data');
+// Fallback file storage (universal, requires zero native modules)
+const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const fallbackFile = isServerless
+  ? '/tmp/cards_store.json'
+  : path.join(process.cwd(), 'data', 'cards_store.json');
+const settingsFile = isServerless
+  ? '/tmp/settings_store.json'
+  : path.join(process.cwd(), 'data', 'settings_store.json');
 
-      if (!fs.existsSync(dataDir)) {
-        fs.mkdirSync(dataDir, { recursive: true });
-      }
-
-      const dbPath = path.join(dataDir, 'cards.db');
-      sqliteDb = new DatabaseSync(dbPath);
-
-      sqliteDb.exec(`
-        CREATE TABLE IF NOT EXISTS cards (
-          id TEXT PRIMARY KEY,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          name TEXT NOT NULL,
-          designation TEXT,
-          department TEXT,
-          company TEXT,
-          tagline TEXT,
-          industry TEXT,
-          role_type TEXT,
-          company_summary TEXT,
-          phone TEXT,
-          phone_secondary TEXT,
-          email TEXT,
-          email_secondary TEXT,
-          website TEXT,
-          address TEXT,
-          city TEXT,
-          country TEXT,
-          linkedin TEXT,
-          other_social TEXT,
-          exhibition_name TEXT,
-          booth_number TEXT,
-          meeting_notes TEXT,
-          action_items TEXT,
-          follow_up_date TEXT,
-          lead_priority TEXT DEFAULT 'WARM',
-          tags TEXT DEFAULT '[]',
-          image_front TEXT,
-          image_back TEXT,
-          product_images TEXT DEFAULT '[]',
-          raw_extracted_json TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS settings (
-          key TEXT PRIMARY KEY,
-          value TEXT NOT NULL
-        );
-      `);
-
-      // Safe migration for existing SQLite DBs
-      try {
-        sqliteDb.exec("ALTER TABLE cards ADD COLUMN product_images TEXT DEFAULT '[]'");
-      } catch (e) {}
-    } catch (err) {
-      console.warn('SQLite fallback unavailable:', err);
+function getRecordsFromFile(): any[] {
+  try {
+    if (fs.existsSync(fallbackFile)) {
+      const data = fs.readFileSync(fallbackFile, 'utf8');
+      return JSON.parse(data);
     }
+  } catch (e) {
+    console.warn('Fallback file read error:', e);
   }
-  return sqliteDb;
+  return [];
+}
+
+function saveRecordToFile(card: any) {
+  try {
+    const list = getRecordsFromFile();
+    const idx = list.findIndex((c: any) => c.id === card.id);
+    if (idx >= 0) {
+      list[idx] = card;
+    } else {
+      list.unshift(card);
+    }
+    const dir = path.dirname(fallbackFile);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(fallbackFile, JSON.stringify(list, null, 2), 'utf8');
+  } catch (e) {
+    console.warn('Fallback file write error:', e);
+  }
 }
 
 function parseCardRow(row: any): VisitingCard {
@@ -224,63 +192,52 @@ export async function getAllCards(filters?: {
     return (data || []).map(parseCardRow);
   }
 
-  // SQLite Fallback
-  const db = getSqliteDb();
-  if (!db) return [];
-
-  let query = 'SELECT * FROM cards WHERE 1=1';
-  const params: string[] = [];
+  // File storage fallback
+  let list = getRecordsFromFile();
 
   if (filters?.priority && filters.priority !== 'ALL') {
-    query += ' AND lead_priority = ?';
-    params.push(filters.priority);
+    list = list.filter((c: any) => c.lead_priority === filters.priority);
   }
   if (filters?.industry && filters.industry !== 'ALL') {
-    query += ' AND industry = ?';
-    params.push(filters.industry);
+    list = list.filter((c: any) => c.industry === filters.industry);
   }
   if (filters?.exhibition && filters.exhibition !== 'ALL') {
-    query += ' AND exhibition_name = ?';
-    params.push(filters.exhibition);
+    list = list.filter((c: any) => c.exhibition_name === filters.exhibition);
   }
   if (filters?.search) {
-    const s = `%${filters.search.toLowerCase()}%`;
-    query += ` AND (
-      LOWER(name) LIKE ? OR 
-      LOWER(company) LIKE ? OR 
-      LOWER(designation) LIKE ? OR 
-      LOWER(meeting_notes) LIKE ? OR 
-      LOWER(phone) LIKE ? OR 
-      LOWER(email) LIKE ? OR 
-      LOWER(industry) LIKE ? OR 
-      LOWER(tags) LIKE ?
-    )`;
-    params.push(s, s, s, s, s, s, s, s);
+    const s = filters.search.toLowerCase();
+    list = list.filter(
+      (c: any) =>
+        (c.name && c.name.toLowerCase().includes(s)) ||
+        (c.company && c.company.toLowerCase().includes(s)) ||
+        (c.designation && c.designation.toLowerCase().includes(s)) ||
+        (c.phone && c.phone.toLowerCase().includes(s)) ||
+        (c.meeting_notes && c.meeting_notes.toLowerCase().includes(s))
+    );
   }
 
-  query += ' ORDER BY created_at DESC';
-  const rows = db.prepare(query).all(...params);
-  return rows.map(parseCardRow);
+  return list.map(parseCardRow);
 }
 
 export async function getCardById(id: string): Promise<VisitingCard | null> {
   const supabase = getSupabase();
   if (supabase) {
-    const { data, error } = await supabase
-      .from('cards')
-      .select('*')
-      .eq('id', id)
-      .maybeSingle();
+    try {
+      const { data, error } = await supabase
+        .from('cards')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
 
-    if (error || !data) return null;
-    return parseCardRow(data);
+      if (!error && data) return parseCardRow(data);
+    } catch (e) {
+      console.warn('Supabase getCardById error:', e);
+    }
   }
 
-  const db = getSqliteDb();
-  if (!db) return null;
-  const row = db.prepare('SELECT * FROM cards WHERE id = ?').get(id);
-  if (!row) return null;
-  return parseCardRow(row);
+  const list = getRecordsFromFile();
+  const found = list.find((c: any) => c.id === id);
+  return found ? parseCardRow(found) : null;
 }
 
 export async function createCard(data: Partial<VisitingCard>): Promise<VisitingCard> {
@@ -347,11 +304,7 @@ export async function createCard(data: Partial<VisitingCard>): Promise<VisitingC
 
   const supabase = getSupabase();
   if (supabase) {
-    let { data: inserted, error } = await supabase
-      .from('cards')
-      .insert(record)
-      .select()
-      .single();
+    let { error } = await supabase.from('cards').insert(record);
 
     // If product_images or extra column is missing in Supabase schema, automatically retry without it
     if (
@@ -382,79 +335,26 @@ export async function createCard(data: Partial<VisitingCard>): Promise<VisitingC
         }
       }
 
-      const retry = await supabase
-        .from('cards')
-        .insert(fallbackRecord)
-        .select()
-        .single();
-      inserted = retry.data;
+      const retry = await supabase.from('cards').insert(fallbackRecord);
       error = retry.error;
     }
 
     if (error) {
       console.error('Supabase createCard error:', error);
-      throw new Error(`Supabase insert failed: ${error.message}`);
+      if (error.message?.includes('row-level security') || error.code === '42501') {
+        throw new Error(
+          'Supabase RLS is blocking inserts. In Supabase SQL Editor run: ALTER TABLE public.cards DISABLE ROW LEVEL SECURITY;'
+        );
+      }
+      throw new Error(`Supabase insert failed: ${error.message} (Code: ${error.code || 'N/A'})`);
     }
-    return parseCardRow(inserted);
+
+    return parseCardRow(record);
   }
 
-  const db = getSqliteDb();
-  if (db) {
-    const stmt = db.prepare(`
-      INSERT INTO cards (
-        id, created_at, updated_at, name, designation, department,
-        company, tagline, industry, role_type, company_summary,
-        phone, phone_secondary, email, email_secondary, website,
-        address, city, country, linkedin, other_social,
-        exhibition_name, booth_number, meeting_notes, action_items,
-        follow_up_date, lead_priority, tags, image_front, image_back, product_images, raw_extracted_json
-      ) VALUES (
-        ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?,
-        ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?
-      )
-    `);
-
-    stmt.run(
-      record.id,
-      record.created_at,
-      record.updated_at,
-      record.name,
-      record.designation,
-      record.department,
-      record.company,
-      record.tagline,
-      record.industry,
-      record.role_type,
-      record.company_summary,
-      record.phone,
-      record.phone_secondary,
-      record.email,
-      record.email_secondary,
-      record.website,
-      record.address,
-      record.city,
-      record.country,
-      record.linkedin,
-      record.other_social,
-      record.exhibition_name,
-      record.booth_number,
-      record.meeting_notes,
-      record.action_items,
-      record.follow_up_date,
-      record.lead_priority,
-      JSON.stringify(record.tags),
-      record.image_front,
-      record.image_back,
-      JSON.stringify(record.product_images || []),
-      record.raw_extracted_json
-    );
-  }
-
-  return (await getCardById(id))!;
+  // Universal file storage fallback
+  saveRecordToFile(record);
+  return parseCardRow(record);
 }
 
 export async function updateCard(
@@ -513,12 +413,10 @@ export async function updateCard(
 
   const supabase = getSupabase();
   if (supabase) {
-    let { data: updated, error } = await supabase
+    let { error } = await supabase
       .from('cards')
       .update(merged)
-      .eq('id', id)
-      .select()
-      .single();
+      .eq('id', id);
 
     // If product_images or extra column is missing in Supabase schema, automatically retry without it
     if (
@@ -551,10 +449,7 @@ export async function updateCard(
       const retry = await supabase
         .from('cards')
         .update(fallbackMerged)
-        .eq('id', id)
-        .select()
-        .single();
-      updated = retry.data;
+        .eq('id', id);
       error = retry.error;
     }
 
@@ -562,82 +457,11 @@ export async function updateCard(
       console.error('Supabase updateCard error:', error);
       throw new Error(`Supabase update failed: ${error.message}`);
     }
-    return parseCardRow(updated);
+    return parseCardRow(merged);
   }
 
-  const db = getSqliteDb();
-  if (db) {
-    const stmt = db.prepare(`
-      UPDATE cards SET
-        updated_at = ?,
-        name = ?,
-        designation = ?,
-        department = ?,
-        company = ?,
-        tagline = ?,
-        industry = ?,
-        role_type = ?,
-        company_summary = ?,
-        phone = ?,
-        phone_secondary = ?,
-        email = ?,
-        email_secondary = ?,
-        website = ?,
-        address = ?,
-        city = ?,
-        country = ?,
-        linkedin = ?,
-        other_social = ?,
-        exhibition_name = ?,
-        booth_number = ?,
-        meeting_notes = ?,
-        action_items = ?,
-        follow_up_date = ?,
-        lead_priority = ?,
-        tags = ?,
-        image_front = ?,
-        image_back = ?,
-        product_images = ?,
-        raw_extracted_json = ?
-      WHERE id = ?
-    `);
-
-    stmt.run(
-      now,
-      merged.name,
-      merged.designation,
-      merged.department,
-      merged.company,
-      merged.tagline,
-      merged.industry,
-      merged.role_type,
-      merged.company_summary,
-      merged.phone,
-      merged.phone_secondary,
-      merged.email,
-      merged.email_secondary,
-      merged.website,
-      merged.address,
-      merged.city,
-      merged.country,
-      merged.linkedin,
-      merged.other_social,
-      merged.exhibition_name,
-      merged.booth_number,
-      merged.meeting_notes,
-      merged.action_items,
-      merged.follow_up_date,
-      merged.lead_priority,
-      JSON.stringify(merged.tags || []),
-      merged.image_front,
-      merged.image_back,
-      JSON.stringify(merged.product_images || []),
-      merged.raw_extracted_json,
-      id
-    );
-  }
-
-  return await getCardById(id);
+  saveRecordToFile(merged);
+  return parseCardRow(merged);
 }
 
 export async function deleteCard(id: string): Promise<boolean> {
@@ -651,11 +475,15 @@ export async function deleteCard(id: string): Promise<boolean> {
     return true;
   }
 
-  const db = getSqliteDb();
-  if (db) {
-    db.prepare('DELETE FROM cards WHERE id = ?').run(id);
+  try {
+    const list = getRecordsFromFile().filter((c: any) => c.id !== id);
+    const dir = path.dirname(fallbackFile);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(fallbackFile, JSON.stringify(list, null, 2), 'utf8');
+    return true;
+  } catch {
+    return false;
   }
-  return true;
 }
 
 export async function getSetting(key: string, defaultValue = ''): Promise<string> {
@@ -669,7 +497,6 @@ export async function getSetting(key: string, defaultValue = ''): Promise<string
         .maybeSingle();
 
       if (error) {
-        console.warn('Supabase getSetting error:', error.message);
         return defaultValue;
       }
       return data ? data.value : defaultValue;
@@ -678,14 +505,15 @@ export async function getSetting(key: string, defaultValue = ''): Promise<string
     }
   }
 
-  const db = getSqliteDb();
-  if (!db) return defaultValue;
   try {
-    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as any;
-    return row ? row.value : defaultValue;
+    if (fs.existsSync(settingsFile)) {
+      const parsed = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+      return parsed[key] !== undefined ? parsed[key] : defaultValue;
+    }
   } catch {
     return defaultValue;
   }
+  return defaultValue;
 }
 
 export async function setSetting(key: string, value: string): Promise<void> {
@@ -699,13 +527,19 @@ export async function setSetting(key: string, value: string): Promise<void> {
     return;
   }
 
-  const db = getSqliteDb();
-  if (db) {
-    try {
-      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
-    } catch (err) {
-      console.error('SQLite setSetting error:', err);
+  try {
+    let map: Record<string, string> = {};
+    if (fs.existsSync(settingsFile)) {
+      try {
+        map = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+      } catch {}
     }
+    map[key] = value;
+    const dir = path.dirname(settingsFile);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(settingsFile, JSON.stringify(map, null, 2), 'utf8');
+  } catch (err) {
+    console.error('File setSetting error:', err);
   }
 }
 

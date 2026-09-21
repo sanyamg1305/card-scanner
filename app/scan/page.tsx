@@ -26,8 +26,10 @@ import {
   Package,
   Plus,
   X,
+  FileText,
 } from 'lucide-react';
 import { compressImageFile } from '@/lib/imageUtils';
+import { CERAMIC_TILE_CATEGORIES } from '@/lib/categories';
 
 export default function ScanPage() {
   const router = useRouter();
@@ -69,8 +71,28 @@ export default function ScanPage() {
   const [industry, setIndustry] = useState('');
   const [roleType, setRoleType] = useState('');
   const [companySummary, setCompanySummary] = useState('');
+  const [description, setDescription] = useState('');
+  const [categories, setCategories] = useState<string[]>([]);
+  const [customCategoryInput, setCustomCategoryInput] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [newTagInput, setNewTagInput] = useState('');
+
+  const toggleCategory = (cat: string) => {
+    setCategories((prev) =>
+      prev.includes(cat) ? prev.filter((c) => c !== cat) : [...prev, cat]
+    );
+  };
+
+  const addCustomCategory = () => {
+    if (customCategoryInput.trim() && !categories.includes(customCategoryInput.trim())) {
+      setCategories([...categories, customCategoryInput.trim()]);
+      setCustomCategoryInput('');
+    }
+  };
+
+  const appendToDescription = (text: string) => {
+    setDescription((prev) => (prev ? `${prev}\n• ${text}` : `• ${text}`));
+  };
 
   // Saved result modal
   const [savedCard, setSavedCard] = useState<VisitingCard | null>(null);
@@ -186,6 +208,16 @@ export default function ScanPage() {
       setIndustry(parsed.industry || '');
       setRoleType(parsed.role_type || '');
       setCompanySummary(parsed.company_summary || '');
+      setDescription(parsed.description || parsed.company_summary || '');
+      const initialCats =
+        parsed.categories && parsed.categories.length > 0
+          ? parsed.categories
+          : parsed.category
+          ? [parsed.category]
+          : parsed.industry
+          ? [parsed.industry]
+          : [];
+      setCategories(initialCats);
       setTags(parsed.suggested_tags || []);
       if (parsed.suggested_priority) {
         setLeadPriority(parsed.suggested_priority);
@@ -216,6 +248,7 @@ export default function ScanPage() {
     }
 
     setIsSaving(true);
+    setScanError(null);
     try {
       const payload: Partial<VisitingCard> = {
         name: name.trim() || 'Contact',
@@ -231,9 +264,12 @@ export default function ScanPage() {
         address,
         city,
         country,
-        industry,
+        industry: categories[0] || industry,
+        category: categories[0] || industry || '',
+        categories,
+        description,
         role_type: roleType,
-        company_summary: companySummary,
+        company_summary: description || companySummary,
         exhibition_name: exhibitionName,
         booth_number: boothNumber,
         meeting_notes: meetingNotes,
@@ -252,13 +288,28 @@ export default function ScanPage() {
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      const responseText = await res.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        throw new Error(
+          res.status === 413
+            ? 'Lead payload exceeds 4.5MB limit.'
+            : `Server response error (${res.status}): ${responseText.slice(0, 120)}`
+        );
+      }
+
+      if (!res.ok || data.error) {
+        throw new Error(data.error || `Failed to save contact lead (${res.status})`);
+      }
+
       if (data.card) {
         setSavedCard(data.card);
       }
     } catch (err: any) {
-      console.error(err);
-      setScanError('Failed to save contact lead');
+      console.error('Save error:', err);
+      setScanError(err.message || 'Failed to save contact lead');
     } finally {
       setIsSaving(false);
     }
@@ -287,6 +338,9 @@ export default function ScanPage() {
     setIndustry('');
     setRoleType('');
     setCompanySummary('');
+    setDescription('');
+    setCategories([]);
+    setCustomCategoryInput('');
     setTags([]);
     setMeetingNotes('');
     setActionItems('');
@@ -660,13 +714,135 @@ export default function ScanPage() {
                 />
               </div>
               <div>
-                <label className="text-xs text-slate-500 block mb-1">Industry</label>
+                <label className="text-xs text-slate-500 block mb-1">Industry / Domain</label>
                 <input
                   type="text"
                   value={industry}
                   onChange={(e) => setIndustry(e.target.value)}
                   className="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
                 />
+              </div>
+            </div>
+          </div>
+
+          {/* Ceramic Tile Exhibition Categories */}
+          <div className="space-y-3.5 p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Layers className="text-indigo-600 dark:text-indigo-400" size={16} />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
+                  Ceramic Tile Categories
+                </h3>
+              </div>
+              <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                {categories.length} Selected
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Select tile finishes, products, or trade role for this lead:
+            </p>
+
+            <div className="space-y-3 pt-1">
+              {CERAMIC_TILE_CATEGORIES.map((group) => (
+                <div key={group.groupName} className="space-y-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                    {group.groupName}
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {group.categories.map((cat) => {
+                      const isSelected = categories.includes(cat);
+                      return (
+                        <button
+                          key={cat}
+                          type="button"
+                          onClick={() => toggleCategory(cat)}
+                          className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all ${
+                            isSelected
+                              ? 'bg-slate-900 text-white shadow-sm dark:bg-white dark:text-slate-900 font-semibold'
+                              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
+                          }`}
+                        >
+                          {isSelected && '✓ '}
+                          {cat}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Custom Category Input */}
+            <div className="flex gap-2 pt-2 border-t border-slate-200/60 dark:border-slate-800">
+              <input
+                type="text"
+                placeholder="Add other category (e.g. 1200x2400 Slabs, Step Riser)..."
+                value={customCategoryInput}
+                onChange={(e) => setCustomCategoryInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addCustomCategory();
+                  }
+                }}
+                className="flex-1 text-xs px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
+              />
+              <button
+                type="button"
+                onClick={addCustomCategory}
+                className="px-3 py-1.5 bg-slate-900 dark:bg-slate-700 text-white text-xs font-semibold rounded-lg hover:bg-slate-800 transition-colors flex items-center gap-1"
+              >
+                <Plus size={13} /> Add
+              </button>
+            </div>
+          </div>
+
+          {/* Lead & Product Description Section */}
+          <div className="space-y-3 p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileText className="text-indigo-600 dark:text-indigo-400" size={16} />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
+                  Lead & Product Description
+                </h3>
+              </div>
+              <span className="text-[11px] text-slate-400 font-medium">Exhibition Details</span>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Product specifications, tile sizes, inquiry details, or booth conversation notes:
+            </p>
+
+            <textarea
+              rows={3}
+              placeholder="e.g. Morbi-based manufacturer specializing in 600x1200mm GVT and high gloss porcelain slabs. Looking for domestic distributors in North India. Minimum order 2 containers."
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              className="w-full text-sm p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-indigo-500/20 leading-relaxed"
+            />
+
+            {/* Quick Prompt Chips */}
+            <div className="space-y-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                Quick Exhibition Snippets (Tap to add):
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  'Inquiring for 600x1200 GVT Tiles',
+                  'Looking for 800x1600 & Slab distributor',
+                  'Tile Exporter looking for OEM factory',
+                  'Large project contractor requirement',
+                  'Requested catalog & wholesale price list',
+                  'Samples provided at booth',
+                ].map((snippet) => (
+                  <button
+                    key={snippet}
+                    type="button"
+                    onClick={() => appendToDescription(snippet)}
+                    className="text-[11px] px-2 py-1 rounded-md bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:border-indigo-300 hover:text-indigo-600 transition-colors"
+                  >
+                    + {snippet}
+                  </button>
+                ))}
               </div>
             </div>
           </div>
