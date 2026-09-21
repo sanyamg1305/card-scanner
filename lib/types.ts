@@ -14,6 +14,9 @@ export interface VisitingCard {
   company: string;
   tagline?: string;
   industry?: string;
+  category?: string; // Primary Ceramic Tile category
+  categories?: string[]; // Selected ceramic tile & business categories
+  description?: string; // Lead, product specifications, or company description
   role_type?: string; // Decision Maker, Buyer, Supplier, Partner, Distributor, Consultant
   company_summary?: string;
   
@@ -64,6 +67,9 @@ export interface CardScanResult {
   linkedin: string;
   other_social: string;
   industry: string;
+  category?: string;
+  categories?: string[];
+  description?: string;
   role_type: string;
   company_summary: string;
   suggested_tags: string[];

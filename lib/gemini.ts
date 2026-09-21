@@ -76,9 +76,9 @@ export async function parseCardWithGemini(
   const modelsToTry = await discoverAvailableModel(apiKey);
 
   const prompt = `
-You are an expert AI business card analyzer specialized for trade shows and exhibitions.
+You are an expert AI business card analyzer specialized for trade shows and exhibitions (especially building materials and ceramic tile exhibitions).
 Analyze the provided business card image(s) (Front and optional Back) and any attached product/sample photos.
-Extract all contact and business information with high precision and classify the business.
+Extract all contact and business information with high precision, generate a rich description, and classify into exhibition categories.
 
 Return ONLY a JSON object matching this exact schema:
 {
@@ -97,9 +97,12 @@ Return ONLY a JSON object matching this exact schema:
   "country": "Country name",
   "linkedin": "LinkedIn profile or handle if on card",
   "other_social": "Other social handles (Twitter/X, Instagram, WeChat, etc.)",
-  "industry": "Industry or business domain (e.g. Manufacturing, Software & IT, Packaging, Logistics, Healthcare, Chemicals, Construction, Retail, Finance, Textile, etc.)",
+  "industry": "Industry or business domain (e.g. Ceramic & Porcelain Tiles, Sanitaryware, Building Materials, etc.)",
+  "category": "Primary category (e.g. 'GVT / PGVT (Glazed Vitrified)', 'Porcelain Tiles', 'Ceramic Wall Tiles', 'Large Format Slabs / Countertops', 'Sanitaryware', 'Tile Adhesives', 'Manufacturer', 'Distributor', 'Exporter / Importer')",
+  "categories": ["Array of 1 to 4 matching categories, e.g. 'GVT / PGVT (Glazed Vitrified)', 'Large Format Slabs / Countertops', 'Tile Manufacturer / Factory'"],
+  "description": "Detailed 2-3 sentence description of the company, products offered, tile formats/finishes, manufacturing capabilities, or booth inquiry notes based on card and product photos",
   "role_type": "One of: 'Decision Maker', 'Buyer', 'Supplier', 'Partner', 'Distributor', 'Consultant', 'Other'",
-  "company_summary": "A concise 1-sentence summary of what this company does or makes, based on their products/services/tagline and sample photos",
+  "company_summary": "A concise 1-sentence summary of what this company does or makes",
   "suggested_tags": ["array", "of", "3-5", "relevant", "keywords", "or", "products"],
   "suggested_priority": "HOT" if high-level decision maker / director / CXO, else "WARM"
 }
@@ -124,36 +127,38 @@ If any field is not visible on the card, leave it as an empty string "". Ensure 
     return { data, mimeType };
   }
 
-  // Front image
-  const front = cleanBase64Data(images.frontBase64, images.frontMime);
+  // Add front image
+  const frontClean = cleanBase64Data(images.frontBase64, images.frontMime || 'image/jpeg');
   contents.push({
     inlineData: {
-      data: front.data,
-      mimeType: front.mimeType,
+      data: frontClean.data,
+      mimeType: frontClean.mimeType,
     },
   });
 
-  // Optional back image
-  if (images.backBase64) {
-    const back = cleanBase64Data(images.backBase64, images.backMime);
+  // Add optional back image
+  if (images.backBase64 && images.backBase64.length > 50) {
+    const backClean = cleanBase64Data(images.backBase64, images.backMime || 'image/jpeg');
     contents.push({
       inlineData: {
-        data: back.data,
-        mimeType: back.mimeType,
+        data: backClean.data,
+        mimeType: backClean.mimeType,
       },
     });
   }
 
-  // Optional product photos
+  // Add optional product/sample photos
   if (images.productImagesBase64 && images.productImagesBase64.length > 0) {
-    for (const pImg of images.productImagesBase64.slice(0, 3)) {
-      const p = cleanBase64Data(pImg);
-      contents.push({
-        inlineData: {
-          data: p.data,
-          mimeType: p.mimeType,
-        },
-      });
+    for (const prodImg of images.productImagesBase64) {
+      if (prodImg && prodImg.length > 50) {
+        const prodClean = cleanBase64Data(prodImg, 'image/jpeg');
+        contents.push({
+          inlineData: {
+            data: prodClean.data,
+            mimeType: prodClean.mimeType,
+          },
+        });
+      }
     }
   }
 
@@ -171,7 +176,18 @@ If any field is not visible on the card, leave it as an empty string "". Ensure 
 
       const result = await model.generateContent(contents);
       const text = result.response.text();
-      return JSON.parse(text) as CardScanResult;
+      const parsed = JSON.parse(text) as CardScanResult;
+      if (!parsed.description) {
+        parsed.description = parsed.company_summary || '';
+      }
+      if (!parsed.categories || !Array.isArray(parsed.categories)) {
+        parsed.categories = parsed.category
+          ? [parsed.category]
+          : parsed.industry
+          ? [parsed.industry]
+          : [];
+      }
+      return parsed;
     } catch (err: any) {
       lastError = err;
       const msg = err.message || '';

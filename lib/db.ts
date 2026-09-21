@@ -1,16 +1,25 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { VisitingCard, LeadPriority } from './types';
 
-// Check if Supabase environment variables are provided
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
-const supabaseKey =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ||
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-  process.env.SUPABASE_KEY;
+let cachedSupabase: SupabaseClient | null = null;
+export function getSupabase(): SupabaseClient | null {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+  const supabaseKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_KEY;
 
-let supabaseInstance: SupabaseClient | null = null;
-if (supabaseUrl && supabaseKey) {
-  supabaseInstance = createClient(supabaseUrl, supabaseKey);
+  if (!supabaseUrl || !supabaseKey) {
+    return null;
+  }
+
+  if (!cachedSupabase) {
+    cachedSupabase = createClient(supabaseUrl, supabaseKey, {
+      auth: { persistSession: false },
+    });
+  }
+
+  return cachedSupabase;
 }
 
 // Fallback SQLite instance for offline / local development
@@ -87,6 +96,56 @@ function getSqliteDb() {
 }
 
 function parseCardRow(row: any): VisitingCard {
+  let productImages: string[] = [];
+  if (Array.isArray(row.product_images)) {
+    productImages = row.product_images;
+  } else if (typeof row.product_images === 'string' && row.product_images.trim() !== '') {
+    try {
+      productImages = JSON.parse(row.product_images);
+    } catch {
+      productImages = [];
+    }
+  } else if (row.raw_extracted_json) {
+    try {
+      const parsed = JSON.parse(row.raw_extracted_json);
+      if (Array.isArray(parsed._fallback_product_images)) {
+        productImages = parsed._fallback_product_images;
+      }
+    } catch {}
+  }
+
+  let rawObj: any = {};
+  if (row.raw_extracted_json) {
+    try {
+      rawObj = JSON.parse(row.raw_extracted_json);
+    } catch {}
+  }
+
+  const description =
+    row.description ||
+    row.company_summary ||
+    rawObj.description ||
+    '';
+
+  let categories: string[] = [];
+  if (Array.isArray(row.categories)) {
+    categories = row.categories;
+  } else if (typeof row.categories === 'string' && row.categories.trim() !== '') {
+    try {
+      categories = JSON.parse(row.categories);
+    } catch {
+      categories = [];
+    }
+  } else if (Array.isArray(rawObj.categories)) {
+    categories = rawObj.categories;
+  } else if (row.category) {
+    categories = [row.category];
+  } else if (row.industry) {
+    categories = [row.industry];
+  }
+
+  const category = row.category || categories[0] || row.industry || '';
+
   return {
     id: row.id,
     created_at: row.created_at,
@@ -96,9 +155,12 @@ function parseCardRow(row: any): VisitingCard {
     department: row.department || '',
     company: row.company || '',
     tagline: row.tagline || '',
-    industry: row.industry || '',
+    industry: row.industry || category || '',
+    category,
+    categories,
+    description,
     role_type: row.role_type || '',
-    company_summary: row.company_summary || '',
+    company_summary: description || row.company_summary || '',
     phone: row.phone || '',
     phone_secondary: row.phone_secondary || '',
     email: row.email || '',
@@ -122,11 +184,7 @@ function parseCardRow(row: any): VisitingCard {
       : [],
     image_front: row.image_front || '',
     image_back: row.image_back || '',
-    product_images: Array.isArray(row.product_images)
-      ? row.product_images
-      : typeof row.product_images === 'string'
-      ? JSON.parse(row.product_images || '[]')
-      : [],
+    product_images: productImages,
     raw_extracted_json: row.raw_extracted_json || '',
   };
 }
@@ -137,8 +195,9 @@ export async function getAllCards(filters?: {
   industry?: string;
   exhibition?: string;
 }): Promise<VisitingCard[]> {
-  if (supabaseInstance) {
-    let query = supabaseInstance.from('cards').select('*');
+  const supabase = getSupabase();
+  if (supabase) {
+    let query = supabase.from('cards').select('*');
 
     if (filters?.priority && filters.priority !== 'ALL') {
       query = query.eq('lead_priority', filters.priority);
@@ -160,7 +219,7 @@ export async function getAllCards(filters?: {
     const { data, error } = await query;
     if (error) {
       console.error('Supabase getAllCards error:', error);
-      return [];
+      throw new Error(`Supabase query failed: ${error.message}`);
     }
     return (data || []).map(parseCardRow);
   }
@@ -205,8 +264,9 @@ export async function getAllCards(filters?: {
 }
 
 export async function getCardById(id: string): Promise<VisitingCard | null> {
-  if (supabaseInstance) {
-    const { data, error } = await supabaseInstance
+  const supabase = getSupabase();
+  if (supabase) {
+    const { data, error } = await supabase
       .from('cards')
       .select('*')
       .eq('id', id)
@@ -227,7 +287,30 @@ export async function createCard(data: Partial<VisitingCard>): Promise<VisitingC
   const id = data.id || `card_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
   const now = new Date().toISOString();
 
-  const record = {
+  const description = data.description || data.company_summary || '';
+  const categories =
+    data.categories && data.categories.length > 0
+      ? data.categories
+      : data.category
+      ? [data.category]
+      : data.industry
+      ? [data.industry]
+      : [];
+  const category = data.category || categories[0] || data.industry || '';
+
+  const rawJson = (() => {
+    try {
+      const parsed = data.raw_extracted_json ? JSON.parse(data.raw_extracted_json) : {};
+      parsed.description = description;
+      parsed.categories = categories;
+      parsed.category = category;
+      return JSON.stringify(parsed);
+    } catch {
+      return JSON.stringify({ description, categories, category });
+    }
+  })();
+
+  const record: Record<string, any> = {
     id,
     created_at: now,
     updated_at: now,
@@ -236,9 +319,9 @@ export async function createCard(data: Partial<VisitingCard>): Promise<VisitingC
     department: data.department || '',
     company: data.company || '',
     tagline: data.tagline || '',
-    industry: data.industry || '',
+    industry: category || data.industry || '',
     role_type: data.role_type || '',
-    company_summary: data.company_summary || '',
+    company_summary: description,
     phone: data.phone || '',
     phone_secondary: data.phone_secondary || '',
     email: data.email || '',
@@ -259,19 +342,58 @@ export async function createCard(data: Partial<VisitingCard>): Promise<VisitingC
     image_front: data.image_front || '',
     image_back: data.image_back || '',
     product_images: data.product_images || [],
-    raw_extracted_json: data.raw_extracted_json || '',
+    raw_extracted_json: rawJson,
   };
 
-  if (supabaseInstance) {
-    const { data: inserted, error } = await supabaseInstance
+  const supabase = getSupabase();
+  if (supabase) {
+    let { data: inserted, error } = await supabase
       .from('cards')
       .insert(record)
       .select()
       .single();
 
+    // If product_images or extra column is missing in Supabase schema, automatically retry without it
+    if (
+      error &&
+      (error.message?.includes('product_images') ||
+        error.message?.includes('column') ||
+        error.code === 'PGRST204' ||
+        error.code === '42703' ||
+        error.message?.includes('schema cache'))
+    ) {
+      console.warn('Column missing in Supabase schema, retrying insert with standard columns fallback');
+      const { product_images, description: _d, categories: _cats, category: _c, ...fallbackRecord } = record;
+      // Stash product images in raw_extracted_json so user samples are safely preserved
+      if (product_images && product_images.length > 0) {
+        try {
+          const rawObj = fallbackRecord.raw_extracted_json
+            ? JSON.parse(fallbackRecord.raw_extracted_json)
+            : {};
+          rawObj._fallback_product_images = product_images;
+          fallbackRecord.raw_extracted_json = JSON.stringify(rawObj);
+        } catch {
+          fallbackRecord.raw_extracted_json = JSON.stringify({
+            description,
+            categories,
+            category,
+            _fallback_product_images: product_images,
+          });
+        }
+      }
+
+      const retry = await supabase
+        .from('cards')
+        .insert(fallbackRecord)
+        .select()
+        .single();
+      inserted = retry.data;
+      error = retry.error;
+    }
+
     if (error) {
       console.error('Supabase createCard error:', error);
-      throw new Error(error.message);
+      throw new Error(`Supabase insert failed: ${error.message}`);
     }
     return parseCardRow(inserted);
   }
@@ -343,23 +465,102 @@ export async function updateCard(
   if (!existing) return null;
 
   const now = new Date().toISOString();
-  const merged = {
+  const description =
+    data.description !== undefined
+      ? data.description
+      : data.company_summary !== undefined
+      ? data.company_summary
+      : existing.description || existing.company_summary || '';
+
+  const categories =
+    data.categories !== undefined
+      ? data.categories
+      : data.category
+      ? [data.category]
+      : existing.categories || [];
+  const category =
+    data.category !== undefined
+      ? data.category
+      : categories[0] || existing.category || existing.industry || '';
+
+  const rawJson = (() => {
+    try {
+      const parsed = data.raw_extracted_json
+        ? JSON.parse(data.raw_extracted_json)
+        : existing.raw_extracted_json
+        ? JSON.parse(existing.raw_extracted_json)
+        : {};
+      parsed.description = description;
+      parsed.categories = categories;
+      parsed.category = category;
+      return JSON.stringify(parsed);
+    } catch {
+      return JSON.stringify({ description, categories, category });
+    }
+  })();
+
+  const merged: Record<string, any> = {
     ...existing,
     ...data,
+    description,
+    categories,
+    category,
+    industry: category || data.industry || existing.industry || '',
+    company_summary: description,
+    raw_extracted_json: rawJson,
     updated_at: now,
   };
 
-  if (supabaseInstance) {
-    const { data: updated, error } = await supabaseInstance
+  const supabase = getSupabase();
+  if (supabase) {
+    let { data: updated, error } = await supabase
       .from('cards')
       .update(merged)
       .eq('id', id)
       .select()
       .single();
 
+    // If product_images or extra column is missing in Supabase schema, automatically retry without it
+    if (
+      error &&
+      (error.message?.includes('product_images') ||
+        error.message?.includes('column') ||
+        error.code === 'PGRST204' ||
+        error.code === '42703' ||
+        error.message?.includes('schema cache'))
+    ) {
+      console.warn('Column missing in Supabase schema, retrying update with standard columns fallback');
+      const { product_images, description: _d, categories: _cats, category: _c, ...fallbackMerged } = merged;
+      if (product_images && product_images.length > 0) {
+        try {
+          const rawObj = fallbackMerged.raw_extracted_json
+            ? JSON.parse(fallbackMerged.raw_extracted_json)
+            : {};
+          rawObj._fallback_product_images = product_images;
+          fallbackMerged.raw_extracted_json = JSON.stringify(rawObj);
+        } catch {
+          fallbackMerged.raw_extracted_json = JSON.stringify({
+            description,
+            categories,
+            category,
+            _fallback_product_images: product_images,
+          });
+        }
+      }
+
+      const retry = await supabase
+        .from('cards')
+        .update(fallbackMerged)
+        .eq('id', id)
+        .select()
+        .single();
+      updated = retry.data;
+      error = retry.error;
+    }
+
     if (error) {
       console.error('Supabase updateCard error:', error);
-      throw new Error(error.message);
+      throw new Error(`Supabase update failed: ${error.message}`);
     }
     return parseCardRow(updated);
   }
@@ -440,8 +641,9 @@ export async function updateCard(
 }
 
 export async function deleteCard(id: string): Promise<boolean> {
-  if (supabaseInstance) {
-    const { error } = await supabaseInstance.from('cards').delete().eq('id', id);
+  const supabase = getSupabase();
+  if (supabase) {
+    const { error } = await supabase.from('cards').delete().eq('id', id);
     if (error) {
       console.error('Supabase deleteCard error:', error);
       return false;
@@ -457,31 +659,53 @@ export async function deleteCard(id: string): Promise<boolean> {
 }
 
 export async function getSetting(key: string, defaultValue = ''): Promise<string> {
-  if (supabaseInstance) {
-    const { data } = await supabaseInstance
-      .from('settings')
-      .select('value')
-      .eq('key', key)
-      .maybeSingle();
+  const supabase = getSupabase();
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('settings')
+        .select('value')
+        .eq('key', key)
+        .maybeSingle();
 
-    return data ? data.value : defaultValue;
+      if (error) {
+        console.warn('Supabase getSetting error:', error.message);
+        return defaultValue;
+      }
+      return data ? data.value : defaultValue;
+    } catch {
+      return defaultValue;
+    }
   }
 
   const db = getSqliteDb();
   if (!db) return defaultValue;
-  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as any;
-  return row ? row.value : defaultValue;
+  try {
+    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as any;
+    return row ? row.value : defaultValue;
+  } catch {
+    return defaultValue;
+  }
 }
 
 export async function setSetting(key: string, value: string): Promise<void> {
-  if (supabaseInstance) {
-    await supabaseInstance.from('settings').upsert({ key, value });
+  const supabase = getSupabase();
+  if (supabase) {
+    try {
+      await supabase.from('settings').upsert({ key, value });
+    } catch (err) {
+      console.error('Supabase setSetting error:', err);
+    }
     return;
   }
 
   const db = getSqliteDb();
   if (db) {
-    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
+    try {
+      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
+    } catch (err) {
+      console.error('SQLite setSetting error:', err);
+    }
   }
 }
 
@@ -521,6 +745,6 @@ export async function getDashboardStats() {
     cold,
     industries,
     exhibitions,
-    isCloudConnected: Boolean(supabaseInstance),
+    isCloudConnected: Boolean(getSupabase()),
   };
 }
