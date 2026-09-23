@@ -31,6 +31,22 @@ import {
 import { compressImageFile } from '@/lib/imageUtils';
 import { CERAMIC_TILE_CATEGORIES } from '@/lib/categories';
 
+function formatFriendlyError(raw: string | null): string {
+  if (!raw) return '';
+  if (
+    raw.includes('522') ||
+    raw.includes('timed out') ||
+    raw.includes('origin web server') ||
+    raw.includes('Cloudflare') ||
+    raw.trim().startsWith('<') ||
+    raw.includes('<!DOCTYPE') ||
+    raw.includes('<html')
+  ) {
+    return 'Your Supabase database appears to be paused or asleep (Cloudflare Error 522). Go to https://supabase.com/dashboard and click "Restore project" or "Unpause" to wake it up.';
+  }
+  return raw;
+}
+
 export default function ScanPage() {
   const router = useRouter();
 
@@ -367,9 +383,9 @@ export default function ScanPage() {
       {scanError && (
         <div className="p-4 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-red-700 dark:text-red-300 flex items-start gap-3">
           <AlertCircle size={18} className="shrink-0 mt-0.5" />
-          <div className="text-sm">
+          <div className="text-sm space-y-1">
             <p className="font-semibold">Notice</p>
-            <p>{scanError}</p>
+            <p>{formatFriendlyError(scanError)}</p>
             {scanError.includes('API Key') && (
               <button
                 onClick={() => router.push('/settings')}
@@ -377,6 +393,19 @@ export default function ScanPage() {
               >
                 Go to Settings to enter Gemini API Key →
               </button>
+            )}
+            {(scanError.includes('522') ||
+              scanError.includes('Supabase') ||
+              scanError.includes('timed out') ||
+              scanError.includes('paused')) && (
+              <a
+                href="https://supabase.com/dashboard"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 mt-2 px-3 py-1.5 rounded-lg bg-red-700 hover:bg-red-800 text-white font-bold text-xs shadow-sm transition-colors"
+              >
+                Open Supabase Dashboard (Restore Project) →
+              </a>
             )}
           </div>
         </div>
@@ -982,9 +1011,22 @@ export default function ScanPage() {
             {scanError && (
               <div className="p-3.5 rounded-xl bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900/60 text-red-700 dark:text-red-300 flex items-start gap-2.5 text-xs animate-in fade-in">
                 <AlertCircle size={17} className="shrink-0 mt-0.5 text-red-600" />
-                <div className="space-y-1">
+                <div className="space-y-1.5 flex-1">
                   <p className="font-bold text-red-800 dark:text-red-200">Unable to Save Lead</p>
-                  <p>{scanError}</p>
+                  <p>{formatFriendlyError(scanError)}</p>
+                  {(scanError.includes('522') ||
+                    scanError.includes('Supabase') ||
+                    scanError.includes('timed out') ||
+                    scanError.includes('paused')) && (
+                    <a
+                      href="https://supabase.com/dashboard"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 mt-1 text-xs font-bold px-3 py-1.5 rounded-lg bg-red-700 hover:bg-red-800 text-white shadow-sm transition-colors"
+                    >
+                      Open Supabase Dashboard (Restore Project) →
+                    </a>
+                  )}
                 </div>
               </div>
             )}

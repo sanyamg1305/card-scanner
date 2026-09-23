@@ -22,6 +22,52 @@ export function getSupabase(): SupabaseClient | null {
   return cachedSupabase;
 }
 
+export function formatDatabaseErrorMessage(rawError: any): string {
+  if (!rawError) return 'Database operation failed';
+  const msg = typeof rawError === 'string' ? rawError : rawError.message || JSON.stringify(rawError);
+
+  if (
+    msg.includes('522') ||
+    msg.includes('timed out') ||
+    msg.includes('origin web server') ||
+    msg.includes('Cloudflare') ||
+    msg.trim().startsWith('<') ||
+    msg.includes('<!DOCTYPE') ||
+    msg.includes('<html')
+  ) {
+    return 'Your Supabase database appears to be paused or sleeping (Error 522). Log in to https://supabase.com/dashboard and click "Restore project" or "Unpause" to wake it up.';
+  }
+
+  if (msg.includes('row-level security') || rawError.code === '42501') {
+    return 'Supabase Row-Level Security (RLS) is blocking access. In Supabase SQL Editor run: ALTER TABLE public.cards DISABLE ROW LEVEL SECURITY;';
+  }
+
+  return msg;
+}
+
+export async function withTimeout<T>(
+  promise: PromiseLike<T>,
+  timeoutMs = 7000,
+  fallbackVal?: T
+): Promise<T> {
+  let timeoutHandle: any;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      reject(new Error('Database query timed out (Supabase may be paused or sleeping)'));
+    }, timeoutMs);
+  });
+
+  try {
+    const res = await Promise.race([promise, timeoutPromise]);
+    clearTimeout(timeoutHandle);
+    return res;
+  } catch (err) {
+    clearTimeout(timeoutHandle);
+    if (fallbackVal !== undefined) return fallbackVal;
+    throw err;
+  }
+}
+
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -162,34 +208,43 @@ export async function getAllCards(filters?: {
   priority?: string;
   industry?: string;
   exhibition?: string;
+  limit?: number;
 }): Promise<VisitingCard[]> {
   const supabase = getSupabase();
   if (supabase) {
-    let query = supabase.from('cards').select('*');
+    try {
+      let query = supabase.from('cards').select('*');
 
-    if (filters?.priority && filters.priority !== 'ALL') {
-      query = query.eq('lead_priority', filters.priority);
-    }
-    if (filters?.industry && filters.industry !== 'ALL') {
-      query = query.eq('industry', filters.industry);
-    }
-    if (filters?.exhibition && filters.exhibition !== 'ALL') {
-      query = query.eq('exhibition_name', filters.exhibition);
-    }
-    if (filters?.search) {
-      const s = filters.search.trim();
-      query = query.or(
-        `name.ilike.%${s}%,company.ilike.%${s}%,designation.ilike.%${s}%,meeting_notes.ilike.%${s}%,phone.ilike.%${s}%,email.ilike.%${s}%,industry.ilike.%${s}%`
-      );
-    }
+      if (filters?.priority && filters.priority !== 'ALL') {
+        query = query.eq('lead_priority', filters.priority);
+      }
+      if (filters?.industry && filters.industry !== 'ALL') {
+        query = query.eq('industry', filters.industry);
+      }
+      if (filters?.exhibition && filters.exhibition !== 'ALL') {
+        query = query.eq('exhibition_name', filters.exhibition);
+      }
+      if (filters?.search) {
+        const s = filters.search.trim();
+        query = query.or(
+          `name.ilike.%${s}%,company.ilike.%${s}%,designation.ilike.%${s}%,meeting_notes.ilike.%${s}%,phone.ilike.%${s}%,email.ilike.%${s}%,industry.ilike.%${s}%`
+        );
+      }
 
-    query = query.order('created_at', { ascending: false });
-    const { data, error } = await query;
-    if (error) {
-      console.error('Supabase getAllCards error:', error);
-      throw new Error(`Supabase query failed: ${error.message}`);
+      query = query.order('created_at', { ascending: false });
+      if (filters?.limit && filters.limit > 0) {
+        query = query.limit(filters.limit);
+      }
+
+      const { data, error } = await withTimeout(Promise.resolve(query), 7000);
+      if (error) {
+        console.warn('Supabase getAllCards error:', error);
+      } else if (data) {
+        return data.map(parseCardRow);
+      }
+    } catch (e: any) {
+      console.warn('Supabase getAllCards failed or timed out:', e?.message || e);
     }
-    return (data || []).map(parseCardRow);
   }
 
   // File storage fallback
@@ -216,6 +271,10 @@ export async function getAllCards(filters?: {
     );
   }
 
+  if (filters?.limit && filters.limit > 0) {
+    list = list.slice(0, filters.limit);
+  }
+
   return list.map(parseCardRow);
 }
 
@@ -223,12 +282,13 @@ export async function getCardById(id: string): Promise<VisitingCard | null> {
   const supabase = getSupabase();
   if (supabase) {
     try {
-      const { data, error } = await supabase
+      const query = supabase
         .from('cards')
         .select('*')
         .eq('id', id)
         .maybeSingle();
 
+      const { data, error } = await withTimeout(Promise.resolve(query), 7000);
       if (!error && data) return parseCardRow(data);
     } catch (e) {
       console.warn('Supabase getCardById error:', e);
@@ -341,12 +401,9 @@ export async function createCard(data: Partial<VisitingCard>): Promise<VisitingC
 
     if (error) {
       console.error('Supabase createCard error:', error);
-      if (error.message?.includes('row-level security') || error.code === '42501') {
-        throw new Error(
-          'Supabase RLS is blocking inserts. In Supabase SQL Editor run: ALTER TABLE public.cards DISABLE ROW LEVEL SECURITY;'
-        );
-      }
-      throw new Error(`Supabase insert failed: ${error.message} (Code: ${error.code || 'N/A'})`);
+      saveRecordToFile(record);
+      const friendlyMsg = formatDatabaseErrorMessage(error);
+      throw new Error(friendlyMsg);
     }
 
     return parseCardRow(record);
@@ -455,7 +512,9 @@ export async function updateCard(
 
     if (error) {
       console.error('Supabase updateCard error:', error);
-      throw new Error(`Supabase update failed: ${error.message}`);
+      saveRecordToFile(merged);
+      const friendlyMsg = formatDatabaseErrorMessage(error);
+      throw new Error(friendlyMsg);
     }
     return parseCardRow(merged);
   }
@@ -544,12 +603,63 @@ export async function setSetting(key: string, value: string): Promise<void> {
 }
 
 export async function getDashboardStats() {
-  const cards = await getAllCards();
+  const supabase = getSupabase();
+  if (supabase) {
+    try {
+      const query = supabase
+        .from('cards')
+        .select('lead_priority, industry, exhibition_name');
+
+      const { data, error } = await withTimeout(Promise.resolve(query), 7000);
+      if (!error && data) {
+        const total = data.length;
+        const hot = data.filter((c: any) => c.lead_priority === 'HOT').length;
+        const warm = data.filter((c: any) => c.lead_priority === 'WARM').length;
+        const cold = data.filter((c: any) => c.lead_priority === 'COLD').length;
+
+        const industryMap = new Map<string, number>();
+        const exhibitionMap = new Map<string, number>();
+
+        for (const c of data) {
+          if (c.industry) {
+            industryMap.set(c.industry, (industryMap.get(c.industry) || 0) + 1);
+          }
+          if (c.exhibition_name) {
+            exhibitionMap.set(c.exhibition_name, (exhibitionMap.get(c.exhibition_name) || 0) + 1);
+          }
+        }
+
+        const industries = Array.from(industryMap.entries())
+          .map(([industry, count]) => ({ industry, count }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 6);
+
+        const exhibitions = Array.from(exhibitionMap.entries())
+          .map(([exhibition_name, count]) => ({ exhibition_name, count }))
+          .sort((a, b) => b.count - a.count);
+
+        return {
+          total,
+          hot,
+          warm,
+          cold,
+          industries,
+          exhibitions,
+          isCloudConnected: true,
+        };
+      }
+    } catch (e) {
+      console.warn('Supabase getDashboardStats query error:', e);
+    }
+  }
+
+  // Fallback file storage calculation
+  const cards = getRecordsFromFile();
 
   const total = cards.length;
-  const hot = cards.filter((c) => c.lead_priority === 'HOT').length;
-  const warm = cards.filter((c) => c.lead_priority === 'WARM').length;
-  const cold = cards.filter((c) => c.lead_priority === 'COLD').length;
+  const hot = cards.filter((c: any) => c.lead_priority === 'HOT').length;
+  const warm = cards.filter((c: any) => c.lead_priority === 'WARM').length;
+  const cold = cards.filter((c: any) => c.lead_priority === 'COLD').length;
 
   const industryMap = new Map<string, number>();
   const exhibitionMap = new Map<string, number>();
@@ -579,6 +689,6 @@ export async function getDashboardStats() {
     cold,
     industries,
     exhibitions,
-    isCloudConnected: Boolean(getSupabase()),
+    isCloudConnected: Boolean(supabase),
   };
 }

@@ -18,9 +18,17 @@ export async function GET(req: NextRequest) {
     const priority = searchParams.get('priority') || undefined;
     const industry = searchParams.get('industry') || undefined;
     const exhibition = searchParams.get('exhibition') || undefined;
+    const limit = searchParams.get('limit') ? parseInt(searchParams.get('limit')!, 10) : undefined;
+    const includeStats = searchParams.get('includeStats') === 'true';
 
-    const cards = await getAllCards({ search, priority, industry, exhibition });
-    return NextResponse.json({ cards });
+    const cards = await getAllCards({ search, priority, industry, exhibition, limit });
+
+    let stats = undefined;
+    if (includeStats) {
+      stats = await getDashboardStats();
+    }
+
+    return NextResponse.json({ cards, stats });
   } catch (error: any) {
     console.error('Error fetching cards:', error);
     return NextResponse.json({ error: error.message || 'Error fetching cards' }, { status: 500 });

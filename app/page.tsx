@@ -18,6 +18,8 @@ import {
   Search,
   Tag,
   MapPin,
+  AlertCircle,
+  RefreshCw,
 } from 'lucide-react';
 
 export default function DashboardPage() {
@@ -38,31 +40,42 @@ export default function DashboardPage() {
     exhibitions: [],
   });
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [defaultExhibition, setDefaultExhibition] = useState('Expo 2026');
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        const t = Date.now();
-        const [cardsRes, statsRes, settingsRes] = await Promise.all([
-          fetch(`/api/cards?_t=${t}`, { cache: 'no-store' }),
-          fetch(`/api/cards?stats=true&_t=${t}`, { cache: 'no-store' }),
-          fetch(`/api/settings?_t=${t}`, { cache: 'no-store' }),
-        ]);
+  const loadData = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const t = Date.now();
+      const res = await fetch(`/api/cards?limit=6&includeStats=true&_t=${t}`, {
+        cache: 'no-store',
+      });
+      const data = await res.json();
 
-        const cardsData = await cardsRes.json();
-        const statsData = await statsRes.json();
-        const settingsData = await settingsRes.json();
-
-        if (cardsData.cards) setCards(cardsData.cards.slice(0, 6)); // recent 6
-        if (statsData.stats) setStats(statsData.stats);
-        if (settingsData.defaultExhibition) setDefaultExhibition(settingsData.defaultExhibition);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
+      if (!res.ok || data.error) {
+        throw new Error(data.error || `Server error (${res.status})`);
       }
+
+      if (data.cards) setCards(data.cards);
+      if (data.stats) setStats(data.stats);
+
+      // Fetch exhibition setting asynchronously without blocking
+      fetch(`/api/settings?_t=${t}`, { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.defaultExhibition) setDefaultExhibition(d.defaultExhibition);
+        })
+        .catch(() => {});
+    } catch (err: any) {
+      console.error('loadData error:', err);
+      setError(err.message || 'Failed to load leads from database');
+    } finally {
+      setLoading(false);
     }
+  };
+
+  useEffect(() => {
     loadData();
   }, []);
 
@@ -244,8 +257,39 @@ export default function DashboardPage() {
           </Link>
         </div>
 
-        {loading ? (
-          <div className="p-8 text-center text-slate-400">Loading leads...</div>
+        {error ? (
+          <div className="p-4 sm:p-5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 text-amber-800 dark:text-amber-200 space-y-3">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle size={18} className="shrink-0 mt-0.5 text-amber-600" />
+              <div>
+                <p className="font-bold text-sm">Notice while loading leads</p>
+                <p className="text-xs text-amber-700 dark:text-amber-300 mt-0.5">{error}</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-3 pt-1">
+              <button
+                type="button"
+                onClick={loadData}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-amber-700 hover:bg-amber-800 text-white font-semibold text-xs transition-colors shadow-sm"
+              >
+                <RefreshCw size={13} />
+                <span>Retry Connection</span>
+              </button>
+              <a
+                href="https://supabase.com/dashboard"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs font-semibold underline text-amber-900 dark:text-amber-100 hover:text-amber-700"
+              >
+                Supabase Dashboard →
+              </a>
+            </div>
+          </div>
+        ) : loading ? (
+          <div className="py-12 text-center text-slate-400 flex flex-col items-center justify-center gap-2.5">
+            <RefreshCw size={22} className="animate-spin text-indigo-600" />
+            <span className="text-xs font-medium text-slate-500">Connecting to database & loading leads...</span>
+          </div>
         ) : cards.length === 0 ? (
           <div className="bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-800 rounded-2xl p-8 text-center space-y-3">
             <div className="w-12 h-12 rounded-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 flex items-center justify-center mx-auto">

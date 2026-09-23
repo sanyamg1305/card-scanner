@@ -288,8 +288,39 @@ function CardsDirectoryContent() {
       </div>
 
       {/* Cards List */}
-      {loading ? (
-        <div className="py-16 text-center text-slate-400 text-sm">Loading contacts...</div>
+      {error ? (
+        <div className="p-5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 text-amber-800 dark:text-amber-200 space-y-3">
+          <div className="flex items-start gap-2.5">
+            <AlertCircle size={18} className="shrink-0 mt-0.5 text-amber-600" />
+            <div>
+              <p className="font-bold text-sm">Unable to Load Leads</p>
+              <p className="text-xs text-amber-700 dark:text-amber-300 mt-0.5">{error}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 pt-1">
+            <button
+              type="button"
+              onClick={fetchCards}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-amber-700 hover:bg-amber-800 text-white font-semibold text-xs transition-colors shadow-sm"
+            >
+              <RefreshCw size={13} />
+              <span>Retry</span>
+            </button>
+            <a
+              href="https://supabase.com/dashboard"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs font-semibold underline text-amber-900 dark:text-amber-100 hover:text-amber-700"
+            >
+              Supabase Dashboard →
+            </a>
+          </div>
+        </div>
+      ) : loading ? (
+        <div className="py-16 text-center text-slate-400 text-sm flex flex-col items-center justify-center gap-2.5">
+          <RefreshCw size={22} className="animate-spin text-indigo-600" />
+          <span className="text-xs font-medium text-slate-500">Connecting to database & loading leads...</span>
+        </div>
       ) : filteredCards.length === 0 ? (
         <div className="bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-800 rounded-2xl p-12 text-center space-y-3">
           <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center mx-auto">
