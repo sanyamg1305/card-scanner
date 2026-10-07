@@ -20,6 +20,7 @@ import {
   MapPin,
   AlertCircle,
   RefreshCw,
+  FileText,
 } from 'lucide-react';
 
 export default function DashboardPage() {
@@ -101,7 +102,15 @@ export default function DashboardPage() {
           </h1>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <a
+            href="/api/export-pdf"
+            download="Cersaie_2026_Exhibition_Leads_Dossier.pdf"
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold border border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 transition-colors shadow-sm"
+          >
+            <FileText size={15} />
+            <span>Export PDF Dossier</span>
+          </a>
           <a
             href="/api/export"
             download

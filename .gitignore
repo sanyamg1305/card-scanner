@@ -37,3 +37,6 @@ next-env.d.ts
 # SQLite Database and uploaded card photos
 data/*.db
 data/*.db-journal
+
+# Large CSV exports
+*.csv
